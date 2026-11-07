@@ -104,7 +104,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create release
-        if: ${{ inputs.create_release != false }}
+        if: ${{ github.event_name == 'push' || inputs.create_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
