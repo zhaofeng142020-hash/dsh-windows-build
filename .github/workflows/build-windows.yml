@@ -1,0 +1,113 @@
+name: Build Windows installer (deepseek-harness)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'deepseek-harness tag/branch to build (dsh-v0.2.1-rc.2)'
+        required: false
+        default: 'dsh-v0.2.1-rc.2'
+      create_release:
+        description: 'Create a GitHub Release with the installer'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ['.github/workflows/build-windows.yml', 'patches/**']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-installer
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Windows x64 unsigned installer
+    runs-on: windows-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+      DSH_LOCAL_INSTALLER_DLL: ${{ github.workspace }}\helper\window-frame.dll
+    steps:
+      - name: Checkout build recipe
+        uses: actions/checkout@v4
+
+      - name: Checkout deepseek-harness source
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Apply local build fixes
+        working-directory: src
+        run: |
+          git apply --ignore-whitespace --whitespace=nowarn ../patches/dsh-build-fixes.patch
+          if ($LASTEXITCODE -ne 0) { throw 'git apply failed' }
+          git diff --stat
+
+      - name: Fetch installer helper DLL from the official exact-version installer
+        run: |
+          New-Item -ItemType Directory -Force helper | Out-Null
+          $url = 'https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}-win-x64.exe'
+          Invoke-WebRequest -Uri $url -OutFile official-installer.exe
+          $sz = 'C:\Program Files\7-Zip\7z.exe'
+          if (-not (Test-Path $sz)) { $sz = '7z' }
+          & $sz e -y -r -o"helper" official-installer.exe window-frame.dll | Out-Null
+          if (-not (Test-Path helper\window-frame.dll)) { throw 'window-frame.dll extraction failed' }
+          Remove-Item official-installer.exe
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm 11.28.5
+        run: npm install -g pnpm@11.28.5
+
+      - name: Write .env.windows
+        working-directory: src/apps/desktop
+        run: |
+          @'
+          DSH_DESKTOP_APP_ID=com.deepseek.harness
+          DSH_DESKTOP_AUTO_UPDATE_ENV=test
+          DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://download.deepseek.com
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.deepseek.com"]}'
+          DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://download.deepseek.com
+          '@ | Set-Content -NoNewline -Encoding utf8 .env.windows
+
+      - name: Install locked dependencies
+        working-directory: src
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Windows x64 unsigned installer
+        working-directory: src
+        run: |
+          pnpm run package:desktop:win:x64:unsigned
+          $exe = Get-ChildItem 'apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'installer exe not found' }
+          Write-Output "INSTALLER=$($exe.FullName)" >> $env:GITHUB_ENV
+          Copy-Item $exe.FullName installer-output.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-harness-windows-x64
+          path: installer-output.exe
+          if-no-files-found: error
+
+      - name: Create release
+        if: ${{ inputs.create_release != false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'windows-${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}'
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag installer-output.exe#deepseek-harness-${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}-win-x64-unsigned.exe --title "DeepSeek Harness Windows x64 (unsigned, self-built)" --notes "Built from deepseek-ai/deepseek-harness at ${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }} on GitHub Actions (windows-latest). Unsigned build for local installation; not eligible for automatic updates."
