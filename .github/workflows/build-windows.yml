@@ -102,7 +102,7 @@ jobs:
           $exe = Get-ChildItem 'apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe' | Select-Object -First 1
           if (-not $exe) { throw 'installer exe not found' }
           Write-Output "INSTALLER=$($exe.FullName)" >> $env:GITHUB_ENV
-          Copy-Item $exe.FullName installer-output.exe
+          Copy-Item $exe.FullName ../installer-output.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
