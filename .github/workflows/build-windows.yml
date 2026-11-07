@@ -51,6 +51,12 @@ jobs:
         run: |
           git apply --ignore-whitespace --whitespace=nowarn ../patches/dsh-build-fixes.patch
           if ($LASTEXITCODE -ne 0) { throw 'git apply failed' }
+          # The patch assumes GNU tar everywhere; hosted runners ship bsdtar, which handles
+          # drive-letter paths itself and rejects --force-local. Choose per tar flavor.
+          $f = 'apps/desktop/scripts/prepare-package-set.ts'
+          $c = Get-Content $f -Raw
+          $c = $c -replace "\['--force-local', '-xOzf', tarball, 'package/package\.json'\]", "(capture('tar', ['--version']).includes('GNU tar') ? ['--force-local', '-xOzf', tarball, 'package/package.json'] : ['-xOzf', tarball, 'package/package.json'])"
+          Set-Content $f -Value $c -NoNewline -Encoding utf8NoBOM
           git diff --stat
 
       - name: Fetch installer helper DLL from the official exact-version installer
