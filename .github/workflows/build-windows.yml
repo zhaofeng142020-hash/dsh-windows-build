@@ -56,7 +56,9 @@ jobs:
       - name: Fetch installer helper DLL from the official exact-version installer
         run: |
           New-Item -ItemType Directory -Force helper | Out-Null
-          $url = 'https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}-win-x64.exe'
+          # The CDN names binaries by bare version, without the dsh-v tag prefix.
+          $ver = ('${{ inputs.source_ref || 'dsh-v0.2.1-rc.2' }}' -replace '^dsh-v', '')
+          $url = "https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-$ver-win-x64.exe"
           Invoke-WebRequest -Uri $url -OutFile official-installer.exe
           $sz = 'C:\Program Files\7-Zip\7z.exe'
           if (-not (Test-Path $sz)) { $sz = '7z' }
